@@ -294,11 +294,24 @@ const createPublicComment = async (context, commentInput) => {
   // Then we actually create the comment with the new status.
   let comment = await createComment(context, commentInput, status);
 
+  // Resolve all the actions that should be created for the comment.
+  const actions = resolveCommentActions(context, wordlist, comment);
+
+  // Create all the actions that need to be created.
+  await Promise.all(actions.map((action) => ActionsService.create(action)));
+
+  // Finally, we return the comment.
+  return comment;
+};
+
+// resolveCommentActions will check if the comment needs to have any action
+// attached to it.
+const resolveCommentActions = (context, wordlist, comment) => {
+  const actions = [];
+
   // If the comment has a suspect word or a link, we need to add a
   // flag to it to indicate that it needs to be looked at.
   // Otherwise just return the new comment.
-
-  // TODO: Check why the wordlist is undefined
 
   // If the wordlist has matched the suspect word filter and we haven't disabled
   // auto-flagging suspect words, then we should flag the comment!
@@ -307,7 +320,7 @@ const createPublicComment = async (context, commentInput) => {
     // TODO: this is kind of fragile, we should refactor this to resolve
     // all these const's that we're using like 'COMMENTS', 'FLAG' to be
     // defined in a checkable schema.
-    await ActionsService.create({
+    actions.push({
       item_id: comment.id,
       item_type: 'COMMENTS',
       action_type: 'FLAG',
@@ -317,8 +330,21 @@ const createPublicComment = async (context, commentInput) => {
     });
   }
 
-  // Finally, we return the comment.
-  return comment;
+  // If the user is an unreliable commenter, then add a flag to the comment.
+  if (context.user && context.user.metadata) {
+    if (KarmaService.isReliable('comment', context.user.metadata.trust) === false) {
+      actions.push({
+        item_id: comment.id,
+        item_type: 'COMMENTS',
+        action_type: 'FLAG',
+        user_id: null,
+        group_id: 'User Trust threshold limit reached',
+        metadata: {}
+      });
+    }
+  }
+
+  return actions;
 };
 
 /**
